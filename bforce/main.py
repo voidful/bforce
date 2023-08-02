@@ -97,7 +97,7 @@ def cache_result(cache_dir="cache"):
             # Create a key based on function name and arguments
             cache_key = f"{func.__name__}_{args}_{kwargs}"
             if cache_key in cache:
-                print(f"Loaded result from cache for function: {func.__name__} with args: {args} and kwargs: {kwargs}")
+                # print(f"Loaded result from cache for function: {func.__name__} with args: {args} and kwargs: {kwargs}")
                 return cache[cache_key]
             else:
                 result = func(*args, **kwargs)
