@@ -1,10 +1,10 @@
-import json
-import os
 import pickle
 import threading
-import uuid
+import os
+import atexit
 from functools import wraps
-
+import hashlib
+import json
 from .exceptions import TimeoutException
 
 
@@ -43,68 +43,55 @@ def timeout_retries(seconds, max_retries=3):
     return decorator
 
 
-def clear_cache(cache_dir="cache"):
-    if os.path.exists(cache_dir):
+def make_cache_key(func, args, kwargs):
+    func_name = pickle.dumps(func.__name__)
+    args_data = pickle.dumps(args)
+    kwargs_data = pickle.dumps(kwargs)
+    key = func_name + args_data + kwargs_data
+    return hashlib.sha256(key).hexdigest()
+
+class CacheResult:
+    def __init__(self, cache_dir="cache"):
+        self.cache_dir = cache_dir
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+        self.cache = self.load_cache(cache_dir)
+        atexit.register(self.save_all)  # Save cache when program exits
+
+    def save_cache(self, cache_key, cache_value):
+        try:
+            self.cache[cache_key] = dict(cache_value)
+        except TypeError:  # If data is not serializable
+            self.cache[cache_key] = cache_value
+
+    def save_all(self):
+        for cache_key, cache_value in self.cache.items():
+            file_path = os.path.join(self.cache_dir, f"{cache_key}.json")
+            with open(file_path, "w") as f:
+                json.dump(cache_value, f)
+
+    def load_cache(self, cache_dir):
+        if not os.path.exists(cache_dir):
+            return {}
+        cache = {}
         for filename in os.listdir(cache_dir):
             file_path = os.path.join(cache_dir, filename)
-            os.remove(file_path)
-
-
-def save_cache(cache_key, cache_value, cache_dir="cache"):
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-    try:
-        file_path = os.path.join(cache_dir, f"{uuid.uuid4().hex}.json")
-        with open(file_path, "w") as f:
-            json.dump((cache_key, cache_value), f)
-    except TypeError:  # If data is not JSON serializable, use pickle
-        file_path = os.path.join(cache_dir, f"{uuid.uuid4().hex}.pkl")
-        with open(file_path, "wb") as f:
-            pickle.dump((cache_key, cache_value), f)
-    return file_path
-
-
-def load_cache(cache_dir="cache"):
-    if not os.path.exists(cache_dir):
-        return {}
-    cache = {}
-    for filename in os.listdir(cache_dir):
-        file_path = os.path.join(cache_dir, filename)
-        try:
             if filename.endswith('.json'):
                 with open(file_path, "r") as f:
-                    cache_key, cache_value = json.load(f)
-            elif filename.endswith('.pkl'):
-                with open(file_path, "rb") as f:
-                    cache_key, cache_value = pickle.load(f)
-            else:
-                continue
-            cache[cache_key] = cache_value
-        except (json.JSONDecodeError, ValueError, pickle.UnpicklingError) as e:
-            print(f"Error in file: {file_path}. Skipping this file.")
-            print(f"Error message: {e}")
-            with open(file_path, "r") as f:
-                print(f"Content: {f.read()}")
-    return cache
+                    cache_value = json.load(f)
+                cache_key = filename.split(".")[0]  # Remove the extension
+                cache[cache_key] = cache_value
+        return cache
 
-
-def cache_result(cache_dir="cache"):
-    def decorator(func):
+    def __call__(self, func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Load cache
-            cache = load_cache(cache_dir)
-            # Create a key based on function name and arguments
-            cache_key = f"{func.__name__}_{args}_{kwargs}"
-            if cache_key in cache:
-                # print(f"Loaded result from cache for function: {func.__name__} with args: {args} and kwargs: {kwargs}")
-                return cache[cache_key]
+            cache_key = make_cache_key(func, args, kwargs)
+            if cache_key in self.cache:
+                return self.cache[cache_key]
             else:
                 result = func(*args, **kwargs)
-                # Save result to cache
-                save_cache(cache_key, result, cache_dir)
+                self.save_cache(cache_key, result)
                 return result
 
         return wrapper
-
-    return decorator
