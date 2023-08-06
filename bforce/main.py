@@ -44,13 +44,14 @@ def timeout_retries(seconds, max_retries=3):
 
 
 def make_cache_key(func, args, kwargs):
-    func_name = pickle.dumps(func.__name__)
+    func_name = func.__name__.encode()
     args_data = pickle.dumps(args)
     kwargs_data = pickle.dumps(kwargs)
     key = func_name + args_data + kwargs_data
     return hashlib.sha256(key).hexdigest()
 
-class CacheResult:
+
+class cache_result:
     def __init__(self, cache_dir="cache"):
         self.cache_dir = cache_dir
         if not os.path.exists(cache_dir):
@@ -74,13 +75,20 @@ class CacheResult:
         if not os.path.exists(cache_dir):
             return {}
         cache = {}
+        file_count = 0  # Count the number of files loaded
         for filename in os.listdir(cache_dir):
             file_path = os.path.join(cache_dir, filename)
             if filename.endswith('.json'):
                 with open(file_path, "r") as f:
-                    cache_value = json.load(f)
-                cache_key = filename.split(".")[0]  # Remove the extension
-                cache[cache_key] = cache_value
+                    try:
+                        cache_value = json.load(f)
+                        file_count += 1  # Increment the counter if the file is successfully loaded
+                    except json.JSONDecodeError:
+                        print(f"Cannot load JSON from {file_path}. Skipping this file.")
+                        continue
+                    cache_key = filename.split(".")[0]  # Remove the extension
+                    cache[cache_key] = cache_value
+        print(f"Loaded {file_count} files from the cache directory")  # Print the number of files loaded
         return cache
 
     def __call__(self, func):
@@ -88,9 +96,11 @@ class CacheResult:
         def wrapper(*args, **kwargs):
             cache_key = make_cache_key(func, args, kwargs)
             if cache_key in self.cache:
+                print(f"Loading result for {func.__name__} from cache")
                 return self.cache[cache_key]
             else:
                 result = func(*args, **kwargs)
+                print(f"Caching result for {func.__name__}")
                 self.save_cache(cache_key, result)
                 return result
 
